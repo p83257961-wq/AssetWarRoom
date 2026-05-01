@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 
-// SHA-256("840515")
-const PASSWORD_HASH = "687370827457f52884991b0fa9e82c130f177db49fce87876bd7a89f50209361";
-const STORAGE_KEY = "awr_auth_v1";
+// SHA-256("1995840515")
+const PASSWORD_HASH = "76ef948b3453cc0afe12944c8a227e65890ef331ff3db622214076cd43136b49";
+const STORAGE_KEY = "awr_auth_v2";
 
 async function sha256Hex(input) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
