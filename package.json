@@ -18,7 +18,6 @@
     "lucide-react": "0.576.0",
     "camtel-design": "1.0.0",
     "tailwindcss": "4.2.1",
-    "@tailwindcss/oxide-linux-x64-musl": "4.2.1",
     "@charcoal-ui/tailwind-config": "5.7.0",
     "postcss-load-config": "6.0.1",
     "firebase": "12.10.0"
