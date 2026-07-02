@@ -62,6 +62,8 @@ import {
   Sun,
   Moon,
   CornerUpLeft,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -107,6 +109,17 @@ const CATEGORY_COLORS = {
   現金: "#3A9B6E",
   虛擬貨幣: "#B91C1C",
   其他: "#7C8594",
+};
+
+/* 深色模式專用類別色票：淺色版的深藍系在深色背景上對比不足 */
+const CATEGORY_COLORS_DARK = {
+  美股ETF: "#6B8EEC",
+  美股: "#8B7CF6",
+  基金: "#5EC2E8",
+  台股: "#34D399",
+  現金: "#F0B847",
+  虛擬貨幣: "#F97066",
+  其他: "#94A3B8",
 };
 
 const DEFAULT_COLOR = "#94A3B8";
@@ -507,6 +520,8 @@ button,input,select{font:inherit;}
 .category-block+.category-block{border-top:1px solid var(--c-border);}
 .category-header{padding:18px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;cursor:pointer;transition:background 0.2s;}
 .category-header:hover{background:var(--c-cat-header-hover);}
+.category-header:focus-visible{outline:2px solid var(--c-accent);outline-offset:-2px;}
+.section-toggle-bar:focus-visible{outline:2px solid var(--c-accent);outline-offset:2px;border-radius:8px;}
 .category-left{display:flex;align-items:center;gap:14px;min-width:220px;}
 .category-color{width:4px;height:36px;border-radius:999px;flex-shrink:0;}
 .category-name-wrap{display:flex;flex-direction:column;gap:3px;}
@@ -549,7 +564,7 @@ button,input,select{font:inherit;}
 .diff-chip.under{color:var(--c-green);background:var(--c-green-dim);}
 .fx-hint{font-size:10px;color:var(--c-text-3);font-weight:600;margin-top:3px;}
 .invalid-hint{font-size:10px;color:var(--c-red);font-weight:700;margin-top:3px;}
-.delete-btn{width:32px;height:32px;border-radius:8px;border:none;background:transparent;color:var(--c-text-3);cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center;justify-content:center;}
+.delete-btn{width:36px;height:36px;border-radius:8px;border:none;background:transparent;color:var(--c-text-3);cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center;justify-content:center;}
 .delete-btn:hover{background:var(--c-red-dim);color:var(--c-red);}
 .category-footer{display:flex;justify-content:flex-start;padding-top:12px;}
 .add-btn-inline{display:inline-flex;align-items:center;gap:7px;border:1px dashed var(--c-border-2);background:transparent;color:var(--c-text-3);border-radius:var(--radius-sm);padding:10px 14px;font-size:12px;font-weight:700;cursor:pointer;transition:all 0.2s;}
@@ -654,6 +669,7 @@ button,input,select{font:inherit;}
   .detail-table-wrap{display:none;}
   .mobile-asset-card{display:block;}
   .analytics-grid,.monthly-grid{grid-template-columns:1fr;}
+  .delete-btn{width:44px;height:44px;}
 }
 `;
 
@@ -694,8 +710,9 @@ function formatFullNumber(val) {
 function generateId() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
-function getCategoryColor(category) {
-  return CATEGORY_COLORS[category] || DEFAULT_COLOR;
+function getCategoryColor(category, dark) {
+  const palette = dark ? CATEGORY_COLORS_DARK : CATEGORY_COLORS;
+  return palette[category] || DEFAULT_COLOR;
 }
 function inferCurrencyFromCategory(category) {
   return category === "美股ETF" || category === "美股" ? "USD" : "TWD";
@@ -842,7 +859,7 @@ function KPIValue({ label, value, subValue, isPositive, tooltip, badge }) {
 /* ── Undo Toast Component ── */
 function UndoToast({ toasts, onUndo, onDismiss }) {
   return (
-    <div className="toast-stack" aria-live="assertive" aria-atomic="false">
+    <div className="toast-stack" aria-live="polite" aria-atomic="false">
       {toasts.map((t) => (
         <div key={t.id} className="toast">
           <span style={{ flex: 1 }}>已刪除「{t.name}」</span>
@@ -1054,6 +1071,17 @@ function SettingsModal({ refData, setRefData, onClose }) {
               }))
             }
           />
+          <div
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              color: "var(--c-text-3)",
+              fontWeight: 600,
+              lineHeight: 1.5,
+            }}
+          >
+            已有上月快照時，「本月變動」會優先採用快照數值，此欄位僅作為備援。
+          </div>
         </div>
         <div className="form-group">
           <label className="form-label">今年年初總資產 YTD（台幣）</label>
@@ -1109,6 +1137,8 @@ export default function App() {
   const [fxLoading, setFxLoading] = useState(false);
   const [fxStatus, setFxStatus] = useState(null);
   const [fxUpdatedAt, setFxUpdatedAt] = useState(null);
+  const [fxSuggestion, setFxSuggestion] = useState(null);
+  const [hydrationTimedOut, setHydrationTimedOut] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const closeSettings = useCallback(() => setShowSettings(false), []);
   const [confirmDialog, setConfirmDialog] = useState(null); // {message,title,onConfirm}
@@ -1184,6 +1214,21 @@ export default function App() {
   const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
   const isDark = theme === "dark";
 
+  // ── Privacy Mode：一鍵隱藏所有金額 ──
+  const [privacyMode, setPrivacyMode] = useState(() => {
+    try {
+      return localStorage.getItem("asset_warroom_privacy") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("asset_warroom_privacy", privacyMode ? "1" : "0");
+    } catch {}
+  }, [privacyMode]);
+  const maskMoney = (formatted) => (privacyMode ? "＊＊＊＊＊" : formatted);
+
   const isInitialLoad = useRef(true);
   const cloudHydratedRef = useRef(false);
   const skipNextCloudSaveRef = useRef(false);
@@ -1197,9 +1242,12 @@ export default function App() {
   });
 
   // ── Exchange Rate ──
-  const fetchExchangeRate = async () => {
-    setFxLoading(true);
-    setFxStatus(null);
+  // applyDirectly=true（手動按鈕）直接套用；false（載入時自動）只提示建議，不覆蓋已存匯率
+  const fetchExchangeRate = async (applyDirectly = true) => {
+    if (applyDirectly) {
+      setFxLoading(true);
+      setFxStatus(null);
+    }
     try {
       const res = await fetch("https://open.er-api.com/v6/latest/USD");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1207,26 +1255,41 @@ export default function App() {
       if (data.result !== "success") throw new Error("API error");
       const rate = data?.rates?.TWD;
       if (!rate) throw new Error("TWD rate not found");
-      setRefData((prev) => ({
-        ...prev,
-        usdToTwd: Math.round(rate * 100) / 100,
-      }));
-      setFxStatus("success");
-      setFxUpdatedAt(
-        new Date().toLocaleTimeString("zh-TW", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      );
+      const rounded = Math.round(rate * 100) / 100;
+      if (applyDirectly) {
+        setRefData((prev) => ({ ...prev, usdToTwd: rounded }));
+        setFxSuggestion(null);
+        setFxStatus("success");
+        setFxUpdatedAt(
+          new Date().toLocaleTimeString("zh-TW", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        );
+      } else {
+        setFxSuggestion(rounded);
+      }
     } catch (err) {
-      setFxStatus("error");
+      if (applyDirectly) setFxStatus("error");
     } finally {
-      setFxLoading(false);
+      if (applyDirectly) setFxLoading(false);
     }
   };
 
+  // 等雲端資料就緒後才抓建議匯率，避免 race condition 蓋掉雲端已存的值
+  const fxAutoFetchedRef = useRef(false);
   useEffect(() => {
-    fetchExchangeRate();
+    if (fxAutoFetchedRef.current) return;
+    if (!isCloudHydrated && cloudStatus !== "error" && !hydrationTimedOut)
+      return;
+    fxAutoFetchedRef.current = true;
+    fetchExchangeRate(false);
+  }, [isCloudHydrated, cloudStatus, hydrationTimedOut]);
+
+  // 離線保護：雲端 4 秒內沒回應就先顯示本地資料，不卡 skeleton
+  useEffect(() => {
+    const t = setTimeout(() => setHydrationTimedOut(true), 4000);
+    return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -1354,19 +1417,23 @@ export default function App() {
   }, [assets, refData, snapshots, categoryOrder, isCloudReady]);
 
   // ── Auto Snapshot ──
+  // 等雲端資料就緒才自動快照，避免用 localStorage 的過期資料建檔
+  const autoSnapDoneRef = useRef(false);
   useEffect(() => {
+    if (autoSnapDoneRef.current) return;
+    if (!isCloudHydrated && cloudStatus !== "error") return;
     const now = new Date();
     if (now.getDate() !== 1) return;
+    autoSnapDoneRef.current = true;
     const monthKey = getMonthKey(now);
-    if (!snapshots.some((s) => s.monthKey === monthKey)) {
-      setSnapshots((prev) =>
-        [
-          buildSnapshot({ assets, usdToTwd: refData.usdToTwd, date: now }),
-          ...prev,
-        ].sort((a, b) => new Date(b.date) - new Date(a.date))
-      );
-    }
-  }, []);
+    setSnapshots((prev) => {
+      if (prev.some((s) => s.monthKey === monthKey)) return prev;
+      return [
+        buildSnapshot({ assets, usdToTwd: refData.usdToTwd, date: now }),
+        ...prev,
+      ].sort((a, b) => new Date(b.date) - new Date(a.date));
+    });
+  }, [isCloudHydrated, cloudStatus, assets, refData.usdToTwd]);
 
   /* ═══════════════════════════════════════════════════════
      COMPUTED
@@ -1391,20 +1458,6 @@ export default function App() {
       ),
     [assets, refData.usdToTwd]
   );
-
-  const performance = useMemo(() => {
-    const monthDiff = totalValue - refData.lastMonthValue;
-    const monthPct =
-      refData.lastMonthValue > 0
-        ? ((monthDiff / refData.lastMonthValue) * 100).toFixed(1)
-        : "0";
-    const yearDiff = totalValue - refData.startYearValue;
-    const yearPct =
-      refData.startYearValue > 0
-        ? ((yearDiff / refData.startYearValue) * 100).toFixed(1)
-        : "0";
-    return { monthDiff, monthPct, yearDiff, yearPct };
-  }, [totalValue, refData]);
 
   const filteredAssets = useMemo(() => {
     let list = [...assets];
@@ -1477,24 +1530,29 @@ export default function App() {
     return stats;
   }, [assets, refData.usdToTwd]);
 
+  // 圖表一律用全域資料，不受搜尋／篩選影響（避免占比口徑錯亂）
   const pieData = useMemo(
     () =>
       orderedCategories
         .map((cat) => {
-          const d = categoryStats[cat];
+          const d = globalCategoryStats[cat];
           return d
-            ? { name: cat, value: d.currentVal, color: getCategoryColor(cat) }
+            ? {
+                name: cat,
+                value: d.currentVal,
+                color: getCategoryColor(cat, isDark),
+              }
             : null;
         })
         .filter((d) => d && d.value > 0),
-    [categoryStats, orderedCategories]
+    [globalCategoryStats, orderedCategories, isDark]
   );
 
   const barData = useMemo(
     () =>
       orderedCategories
         .map((cat) => {
-          const d = categoryStats[cat];
+          const d = globalCategoryStats[cat];
           if (!d) return null;
           const currentPct =
             totalValue > 0
@@ -1508,7 +1566,7 @@ export default function App() {
           };
         })
         .filter(Boolean),
-    [categoryStats, totalValue, orderedCategories]
+    [globalCategoryStats, totalValue, orderedCategories]
   );
 
   const deviationScore = useMemo(() => {
@@ -1523,17 +1581,20 @@ export default function App() {
   const rebalanceHints = useMemo(() => {
     const hints = [];
     assets.forEach((a) => {
+      const targetPct = Number(a.targetPercent) || 0;
+      // 未設定目標的資產不進建議清單，避免整排「賣出」噪音
+      if (targetPct <= 0) return;
       const twdVal = convertAssetToTwd(a, refData.usdToTwd);
       const curPct = totalValue > 0 ? (twdVal / totalValue) * 100 : 0;
-      const diffPct = curPct - a.targetPercent;
-      const targetVal = totalValue * (a.targetPercent / 100);
+      const diffPct = curPct - targetPct;
+      const targetVal = totalValue * (targetPct / 100);
       const diffVal = twdVal - targetVal;
       if (Math.abs(diffPct) > 1 || Math.abs(diffVal) > 50000) {
         hints.push({
           id: a.id,
           name: a.name,
           category: a.category,
-          targetPct: a.targetPercent,
+          targetPct: targetPct,
           currentPct: curPct.toFixed(1),
           diffPct: Math.abs(diffPct).toFixed(1),
           diffVal: Math.abs(diffVal),
@@ -1604,11 +1665,59 @@ export default function App() {
       totalValue > 0 ? ((cashAssetValue / totalValue) * 100).toFixed(1) : "0.0",
     [cashAssetValue, totalValue]
   );
+  const cashStatus = useMemo(() => {
+    const r = Number(cashAssetRatio);
+    if (r < 5)
+      return {
+        label: "偏低",
+        color: "var(--c-yellow)",
+        bg: "var(--c-yellow-dim)",
+      };
+    if (r > 30)
+      return {
+        label: "偏高",
+        color: "var(--c-yellow)",
+        bg: "var(--c-yellow-dim)",
+      };
+    return {
+      label: "適中",
+      color: "var(--c-green)",
+      bg: "var(--c-green-dim)",
+    };
+  }, [cashAssetRatio]);
 
   const orderedSnapshots = useMemo(
     () => [...snapshots].sort((a, b) => new Date(b.date) - new Date(a.date)),
     [snapshots]
   );
+
+  // 「本月變動」基準統一：有上月（或更早）快照就用快照，否則退回手動設定值
+  const effectiveLastMonth = useMemo(() => {
+    const nowKey = getMonthKey(new Date());
+    const prevSnap = orderedSnapshots.find((s) => s.monthKey < nowKey);
+    if (prevSnap)
+      return { value: prevSnap.totalValue, source: `${prevSnap.monthKey} 快照` };
+    return { value: refData.lastMonthValue, source: "手動基準" };
+  }, [orderedSnapshots, refData.lastMonthValue]);
+
+  const performance = useMemo(() => {
+    const baseline = effectiveLastMonth.value;
+    const monthDiff = totalValue - baseline;
+    const monthPct =
+      baseline > 0 ? ((monthDiff / baseline) * 100).toFixed(1) : "0";
+    const yearDiff = totalValue - refData.startYearValue;
+    const yearPct =
+      refData.startYearValue > 0
+        ? ((yearDiff / refData.startYearValue) * 100).toFixed(1)
+        : "0";
+    return {
+      monthDiff,
+      monthPct,
+      yearDiff,
+      yearPct,
+      baselineSource: effectiveLastMonth.source,
+    };
+  }, [totalValue, refData.startYearValue, effectiveLastMonth]);
   const snapshotChartData = useMemo(
     () =>
       [...snapshots]
@@ -1718,6 +1827,10 @@ export default function App() {
   }, [performance.monthDiff]);
 
   const monthlyInsight = useMemo(() => {
+    if (orderedSnapshots.length === 0)
+      return "尚未建立月度快照。按「記錄本月快照」留下第一筆紀錄後，這裡會自動比較每月變化並產生判讀。";
+    if (orderedSnapshots.length === 1)
+      return `已建立 ${orderedSnapshots[0].monthKey} 的第一筆快照。下個月再記錄一次，這裡就會開始比較月度變化。`;
     const direction =
       monthlySummary.diff > 0
         ? "增加"
@@ -1744,7 +1857,7 @@ export default function App() {
     return `本月總資產較上月${direction} ${Math.abs(
       Number(monthlySummary.diffPct)
     ).toFixed(1)}%，${topCategoryText}，${deviationHint}。${usdHint}`;
-  }, [monthlySummary, usdAssetRatio]);
+  }, [monthlySummary, usdAssetRatio, orderedSnapshots]);
 
   /* ═══════════════════════════════════════════════════════
      ACTIONS
@@ -1754,12 +1867,25 @@ export default function App() {
       prev.map((item) => {
         if (item.id !== id) return item;
         let parsed = value;
-        if (field === "value" || field === "targetPercent") {
+        // 市值輸入中保留原始字串（否則清空會變 0、小數點打不出來），離開欄位時再由 sanitizeAssetValue 正規化
+        if (field === "targetPercent") {
           parsed = Number.isNaN(Number(value)) ? 0 : Number(value);
-          if (field === "targetPercent")
-            parsed = Math.min(100, Math.max(0, parsed));
+          parsed = Math.min(100, Math.max(0, parsed));
         }
         return { ...item, [field]: parsed };
+      })
+    );
+  }, []);
+
+  // 市值欄位 onBlur：非數字歸零、負數 clamp 到 0，避免負值被計入總資產
+  const sanitizeAssetValue = useCallback((id) => {
+    setAssets((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        const n = Number(item.value);
+        const clean = Number.isNaN(n) ? 0 : Math.max(0, n);
+        if (clean === item.value) return item;
+        return { ...item, value: clean };
       })
     );
   }, []);
@@ -1865,21 +1991,22 @@ export default function App() {
     return false;
   };
 
-  const convertAssetCurrency = (id) => {
+  // 切換幣別時一律依匯率換算金額，維持台幣等值不變（避免 65000 TWD 誤變 65000 USD）
+  const changeAssetCurrency = (id, nextCurrency) => {
     setAssets((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
         const cur = getDisplayCurrency(item);
-        const next = cur === "USD" ? "TWD" : "USD";
+        if (cur === nextCurrency) return item;
         return {
           ...item,
           value: convertValueByCurrency(
             item.value,
             cur,
-            next,
+            nextCurrency,
             refData.usdToTwd
           ),
-          currency: next,
+          currency: nextCurrency,
         };
       })
     );
@@ -1922,17 +2049,21 @@ export default function App() {
   };
 
   const exportCSV = () => {
-    const rows = assets.map(
-      (i) =>
-        `${i.category},${i.name},${getDisplayCurrency(i)},${
-          Number(i.value) || 0
-        },${Math.round(convertAssetToTwd(i, refData.usdToTwd))},${
-          Number(i.targetPercent) || 0
-        }%`
+    // 欄位加引號跳脫，名稱含逗號才不會讓欄位錯位
+    const esc = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const rows = assets.map((i) =>
+      [
+        esc(i.category),
+        esc(i.name),
+        getDisplayCurrency(i),
+        Number(i.value) || 0,
+        Math.round(convertAssetToTwd(i, refData.usdToTwd)),
+        `${Number(i.targetPercent) || 0}%`,
+      ].join(",")
     );
     const link = document.createElement("a");
     link.href =
-      "data:text/csv;charset=utf-8,\uFEFF" +
+      "data:text/csv;charset=utf-8,%EF%BB%BF" +
       encodeURIComponent(
         "類別,項目,輸入幣別,輸入市值,換算台幣,目標占比\n" + rows.join("\n")
       );
@@ -2320,6 +2451,14 @@ export default function App() {
             </div>
             <button
               className="btn icon"
+              onClick={() => setPrivacyMode((p) => !p)}
+              title={privacyMode ? "顯示金額" : "隱藏金額（隱私模式）"}
+              aria-pressed={privacyMode}
+            >
+              {privacyMode ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+            <button
+              className="btn icon"
               onClick={toggleTheme}
               title={isDark ? "切換淺色模式" : "切換深色模式"}
             >
@@ -2342,8 +2481,10 @@ export default function App() {
 
       <div className="shell">
         <section className="hero">
-          {/* ── Skeleton when cloud connecting ── */}
-          {cloudStatus === "connecting" && !isCloudHydrated ? (
+          {/* ── Skeleton when cloud connecting（逾時後直接顯示本地資料）── */}
+          {cloudStatus === "connecting" &&
+          !isCloudHydrated &&
+          !hydrationTimedOut ? (
             <SkeletonDashboard />
           ) : (
             <>
@@ -2418,6 +2559,8 @@ export default function App() {
                           icon: <Target size={13} />,
                           text: `目標總占比 ${totalTargetPercent.toFixed(1)}%`,
                           warn: totalTargetPercent > 100,
+                          soft:
+                            totalTargetPercent > 0 && totalTargetPercent < 100,
                         },
                       ].map((item, i) => (
                         <div
@@ -2430,6 +2573,12 @@ export default function App() {
                                   borderColor: "rgba(185,28,28,0.2)",
                                   background: "var(--c-red-dim)",
                                 }
+                              : item.soft
+                              ? {
+                                  color: "var(--c-yellow)",
+                                  borderColor: "rgba(146,97,14,0.2)",
+                                  background: "var(--c-yellow-dim)",
+                                }
                               : {}
                           }
                         >
@@ -2438,6 +2587,11 @@ export default function App() {
                           {item.warn && (
                             <span style={{ fontSize: 10, marginLeft: 4 }}>
                               ⚠ 超過100%
+                            </span>
+                          )}
+                          {item.soft && (
+                            <span style={{ fontSize: 10, marginLeft: 4 }}>
+                              未配置 {(100 - totalTargetPercent).toFixed(1)}%
                             </span>
                           )}
                         </div>
@@ -2450,7 +2604,7 @@ export default function App() {
                         Total Portfolio Value (TWD)
                       </div>
                       <div className="hero-total-value">
-                        {formatCompact(totalValue)}
+                        {maskMoney(formatCompact(totalValue))}
                       </div>
                       <div className="hero-total-sub">
                         共 {assets.length} 項資產｜美元匯率 {refData.usdToTwd}
@@ -2519,6 +2673,7 @@ export default function App() {
                           value={search}
                           onChange={(e) => setSearch(e.target.value)}
                           placeholder="搜尋資產名稱或類別…"
+                          aria-label="搜尋資產名稱或類別"
                         />
                       </div>
                       <div className="select-box">
@@ -2578,6 +2733,7 @@ export default function App() {
                             type="number"
                             step="0.01"
                             value={refData.usdToTwd}
+                            aria-label="美元匯率 USD/TWD"
                             onChange={(e) =>
                               setRefData((p) => ({
                                 ...p,
@@ -2588,7 +2744,7 @@ export default function App() {
                         </div>
                         <button
                           className="btn"
-                          onClick={fetchExchangeRate}
+                          onClick={() => fetchExchangeRate(true)}
                           disabled={fxLoading}
                           style={{ padding: "7px 12px", fontSize: 12 }}
                         >
@@ -2617,6 +2773,47 @@ export default function App() {
                             連線中
                           </span>
                         )}
+                        {fxSuggestion !== null &&
+                          Math.abs(fxSuggestion - refData.usdToTwd) >= 0.01 && (
+                            <span className="fx-status loading">
+                              最新匯率 {fxSuggestion}
+                              <button
+                                onClick={() => {
+                                  setRefData((p) => ({
+                                    ...p,
+                                    usdToTwd: fxSuggestion,
+                                  }));
+                                  setFxSuggestion(null);
+                                }}
+                                style={{
+                                  border: "none",
+                                  background: "var(--c-accent)",
+                                  color: "white",
+                                  borderRadius: 6,
+                                  padding: "3px 8px",
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                套用
+                              </button>
+                              <button
+                                onClick={() => setFxSuggestion(null)}
+                                title="忽略建議"
+                                style={{
+                                  border: "none",
+                                  background: "transparent",
+                                  color: "var(--c-text-3)",
+                                  cursor: "pointer",
+                                  display: "inline-flex",
+                                  padding: 0,
+                                }}
+                              >
+                                <X size={11} />
+                              </button>
+                            </span>
+                          )}
                       </div>
                     </div>
                     <div
@@ -2627,7 +2824,8 @@ export default function App() {
                         fontWeight: 600,
                       }}
                     >
-                      資料來源：open.er-api.com · 每日更新 · 可手動調整
+                      資料來源：open.er-api.com ·
+                      載入時僅提示建議、不自動覆蓋你存的匯率 · 可手動調整
                     </div>
                   </div>
                 </div>
@@ -2644,7 +2842,7 @@ export default function App() {
                         {cat !== "全部" && (
                           <span
                             className="category-dot"
-                            style={{ background: getCategoryColor(cat) }}
+                            style={{ background: getCategoryColor(cat, isDark) }}
                           />
                         )}
                         {cat}
@@ -2669,9 +2867,13 @@ export default function App() {
               <div className="kpi-grid">
                 <div className="card kpi-card featured animate-in delay-2">
                   <KPIValue
-                    label="總資產市值（台幣）"
-                    value={formatCompact(totalValue)}
-                    subValue={`${assets.length} 項資產追蹤中`}
+                    label="現金水位"
+                    value={`${cashAssetRatio}%`}
+                    subValue={`${maskMoney(
+                      formatCompact(cashAssetValue)
+                    )} 可動用現金`}
+                    badge={cashStatus}
+                    tooltip="現金類資產占總資產的比例。太低缺乏緩衝與加碼空間，太高則拖累長期報酬。"
                   />
                 </div>
                 {[
@@ -2680,11 +2882,13 @@ export default function App() {
                       <KPIValue
                         label="本月變動"
                         value={`${
-                          performance.monthDiff >= 0 ? "+" : ""
+                          performance.monthDiff >= 0 ? "+" : "-"
                         }${Math.abs(Number(performance.monthPct))}%`}
                         subValue={`${
                           performance.monthDiff >= 0 ? "+" : ""
-                        }${formatCompactFixed(performance.monthDiff)}`}
+                        }${maskMoney(
+                          formatCompactFixed(performance.monthDiff)
+                        )}｜基準：${performance.baselineSource}`}
                         isPositive={performance.monthDiff >= 0}
                         badge={monthlyStatus}
                       />
@@ -2696,11 +2900,11 @@ export default function App() {
                       <KPIValue
                         label="今年以來（YTD）"
                         value={`${
-                          performance.yearDiff >= 0 ? "+" : ""
+                          performance.yearDiff >= 0 ? "+" : "-"
                         }${Math.abs(Number(performance.yearPct))}%`}
                         subValue={`${
                           performance.yearDiff >= 0 ? "+" : ""
-                        }${formatCompactFixed(performance.yearDiff)}`}
+                        }${maskMoney(formatCompactFixed(performance.yearDiff))}`}
                         isPositive={performance.yearDiff >= 0}
                       />
                     ),
@@ -2729,7 +2933,16 @@ export default function App() {
               {/* ── Collapsible Analytics ── */}
               <div
                 className="section-toggle-bar animate-in delay-4"
+                role="button"
+                tabIndex={0}
+                aria-expanded={showAnalytics}
                 onClick={() => setShowAnalytics((p) => !p)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setShowAnalytics((p) => !p);
+                  }
+                }}
               >
                 <div className="section-toggle-line" />
                 <div
@@ -2763,15 +2976,15 @@ export default function App() {
                         資產分佈
                       </div>
                       <div className="card-desc">
-                        所有資產先換算成台幣後，檢視目前整體配置結構。
+                        所有資產先換算成台幣後，檢視目前整體配置結構（不受搜尋篩選影響）。
                       </div>
                       <div className="chart-wrap">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
                             <Pie
                               data={pieData}
-                              innerRadius={90}
-                              outerRadius={120}
+                              innerRadius="62%"
+                              outerRadius="85%"
                               paddingAngle={3}
                               dataKey="value"
                               cornerRadius={8}
@@ -2802,7 +3015,7 @@ export default function App() {
                                         fill={pieCenterSubColor}
                                         fontWeight="700"
                                       >
-                                        {filteredAssets.length} 項
+                                        {assets.length} 項
                                       </tspan>
                                       <tspan
                                         x={cx}
@@ -2812,7 +3025,7 @@ export default function App() {
                                         fontWeight="700"
                                         fontFamily="IBM Plex Mono,monospace"
                                       >
-                                        {formatCompact(totalValue)}
+                                        {maskMoney(formatCompact(totalValue))}
                                       </tspan>
                                     </text>
                                   );
@@ -2820,7 +3033,7 @@ export default function App() {
                               />
                             </Pie>
                             <RechartsTooltip
-                              formatter={(val) => formatCurrency(val)}
+                              formatter={(val) => maskMoney(formatCurrency(val))}
                               contentStyle={chartTooltipStyle}
                             />
                           </PieChart>
@@ -2892,7 +3105,7 @@ export default function App() {
                                   {hint.actionType === "sell" ? "賣出" : "買入"}
                                   約{" "}
                                   <strong>
-                                    {formatCompactFixed(hint.diffVal)}
+                                    {maskMoney(formatCompactFixed(hint.diffVal))}
                                   </strong>
                                 </div>
                               </div>
@@ -3080,10 +3293,14 @@ export default function App() {
                               />
                               <YAxis
                                 tick={{ fontSize: 11, fill: pieCenterSubColor }}
-                                tickFormatter={(v) => formatCompact(v)}
+                                tickFormatter={(v) =>
+                                  privacyMode ? "•" : formatCompact(v)
+                                }
                               />
                               <RechartsTooltip
-                                formatter={(val) => formatCurrency(val)}
+                                formatter={(val) =>
+                                  maskMoney(formatCurrency(val))
+                                }
                                 contentStyle={chartTooltipStyle}
                               />
                               <Line
@@ -3129,7 +3346,9 @@ export default function App() {
                         {[
                           {
                             label: "本月總資產",
-                            value: formatCompact(monthlySummary.currentTotal),
+                            value: maskMoney(
+                              formatCompact(monthlySummary.currentTotal)
+                            ),
                             sub: "依目前匯率換算",
                             cls: "",
                           },
@@ -3140,14 +3359,16 @@ export default function App() {
                             }${monthlySummary.diffPct.toFixed(1)}%`,
                             sub: `${
                               monthlySummary.diff >= 0 ? "+" : ""
-                            }${formatCompactFixed(monthlySummary.diff)}`,
+                            }${maskMoney(
+                              formatCompactFixed(monthlySummary.diff)
+                            )}`,
                             cls:
                               monthlySummary.diff >= 0
                                 ? "positive"
                                 : "negative",
                           },
                           {
-                            label: "變動最大類別",
+                            label: "占比最大類別",
                             value: monthlySummary.biggestCategory,
                             sub: `目前佔比 ${monthlySummary.biggestCategoryPercent}`,
                             cls: "",
@@ -3181,7 +3402,7 @@ export default function App() {
                               <div className="snap-item-head">
                                 <div className="snap-date">{snap.monthKey}</div>
                                 <div className="snap-total">
-                                  {formatCompact(snap.totalValue)}
+                                  {maskMoney(formatCompact(snap.totalValue))}
                                 </div>
                               </div>
                               <div className="snap-meta">
@@ -3203,7 +3424,8 @@ export default function App() {
                                         className="category-dot"
                                         style={{
                                           background: getCategoryColor(
-                                            item.category
+                                            item.category,
+                                            isDark
                                           ),
                                         }}
                                       />
@@ -3422,14 +3644,16 @@ export default function App() {
                   .filter((cat) => categoryStats[cat])
                   .map((cat) => {
                     const stat = categoryStats[cat];
+                    // header 的市值／占比一律用全域數字，搜尋篩選只影響下方明細列
+                    const gstat = globalCategoryStats[cat] || stat;
                     const isExpanded = expandedCategories[cat];
-                    const catColor = getCategoryColor(cat);
+                    const catColor = getCategoryColor(cat, isDark);
                     const catCurrentPct =
                       totalValue > 0
-                        ? ((stat.currentVal / totalValue) * 100).toFixed(1)
+                        ? ((gstat.currentVal / totalValue) * 100).toFixed(1)
                         : "0.0";
                     const catGap = (
-                      Number(catCurrentPct) - stat.targetPct
+                      Number(catCurrentPct) - gstat.targetPct
                     ).toFixed(1);
                     const isOver = Number(catGap) > 0;
                     const catIndex = orderedCategories.indexOf(cat);
@@ -3438,7 +3662,19 @@ export default function App() {
                       <div key={cat} className="category-block">
                         <div
                           className="category-header"
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={!!isExpanded}
                           onClick={() => toggleCategory(cat)}
+                          onKeyDown={(e) => {
+                            if (
+                              e.target === e.currentTarget &&
+                              (e.key === "Enter" || e.key === " ")
+                            ) {
+                              e.preventDefault();
+                              toggleCategory(cat);
+                            }
+                          }}
                         >
                           <div className="category-left">
                             {isExpanded ? (
@@ -3456,7 +3692,9 @@ export default function App() {
                                 {cat}
                               </div>
                               <div className="category-count">
-                                {stat.items.length} 項目
+                                {stat.items.length === gstat.items.length
+                                  ? `${stat.items.length} 項目`
+                                  : `顯示 ${stat.items.length} / 共 ${gstat.items.length} 項`}
                               </div>
                             </div>
                           </div>
@@ -3465,16 +3703,22 @@ export default function App() {
                               <div className="cat-label">總市值</div>
                               <div
                                 className="cat-value"
-                                title={formatFullNumber(stat.currentVal)}
+                                title={
+                                  privacyMode
+                                    ? undefined
+                                    : formatFullNumber(gstat.currentVal)
+                                }
                               >
-                                {formatCompactFixed(stat.currentVal)}
+                                {maskMoney(
+                                  formatCompactFixed(gstat.currentVal)
+                                )}
                               </div>
                             </div>
                             <div className="cat-box">
                               <div className="cat-label">目前 / 目標</div>
                               <div className="cat-value">
                                 <strong>{catCurrentPct}%</strong> /{" "}
-                                {stat.targetPct}%
+                                {gstat.targetPct}%
                               </div>
                             </div>
                             <div className="cat-box">
@@ -3536,7 +3780,7 @@ export default function App() {
                                     </th>
                                     <th
                                       style={{
-                                        width: "14%",
+                                        width: "15%",
                                         textAlign: "right",
                                       }}
                                     >
@@ -3544,7 +3788,7 @@ export default function App() {
                                     </th>
                                     <th
                                       style={{
-                                        width: "14%",
+                                        width: "15%",
                                         textAlign: "right",
                                       }}
                                     >
@@ -3552,15 +3796,7 @@ export default function App() {
                                     </th>
                                     <th
                                       style={{
-                                        width: "10%",
-                                        textAlign: "right",
-                                      }}
-                                    >
-                                      幣別轉換
-                                    </th>
-                                    <th
-                                      style={{
-                                        width: "14%",
+                                        width: "15%",
                                         textAlign: "right",
                                       }}
                                     >
@@ -3630,6 +3866,7 @@ export default function App() {
                                                   : ""
                                               }`}
                                               value={item.name}
+                                              aria-label="項目名稱"
                                               onChange={(e) =>
                                                 updateAsset(
                                                   item.id,
@@ -3656,11 +3893,12 @@ export default function App() {
                                         </td>
                                         <td style={{ textAlign: "right" }}>
                                           <select
-                                            value={item.currency}
+                                            value={getDisplayCurrency(item)}
+                                            aria-label={`${item.name} 幣別（切換時自動換算金額）`}
+                                            title={`切換幣別會依匯率 ${refData.usdToTwd} 自動換算金額`}
                                             onChange={(e) =>
-                                              updateAsset(
+                                              changeAssetCurrency(
                                                 item.id,
-                                                "currency",
                                                 e.target.value
                                               )
                                             }
@@ -3683,48 +3921,70 @@ export default function App() {
                                           </select>
                                         </td>
                                         <td style={{ textAlign: "right" }}>
-                                          <input
-                                            className={`value-input ${
-                                              isValueInvalid ? "invalid" : ""
-                                            }`}
-                                            type="number"
-                                            value={item.value}
-                                            title={
-                                              inputCurrency === "USD"
-                                                ? formatUsd(item.value)
-                                                : formatCurrency(item.value)
-                                            }
-                                            onChange={(e) =>
-                                              updateAsset(
-                                                item.id,
-                                                "value",
-                                                e.target.value
-                                              )
-                                            }
-                                          />
-                                          <div
-                                            className={
-                                              isValueInvalid
-                                                ? "fx-hint" +
-                                                  " " +
-                                                  "invalid-hint"
-                                                : "fx-hint"
-                                            }
-                                            style={
-                                              isValueInvalid
-                                                ? {
-                                                    color: "var(--c-red)",
-                                                    fontWeight: 700,
-                                                  }
-                                                : {}
-                                            }
-                                          >
-                                            {isValueInvalid
-                                              ? "數值不可為負數"
-                                              : inputCurrency === "USD"
-                                              ? formatUsd(item.value)
-                                              : formatCurrency(item.value)}
-                                          </div>
+                                          {privacyMode ? (
+                                            <div
+                                              style={{
+                                                fontFamily: "var(--mono)",
+                                                fontSize: 13,
+                                                color: "var(--c-text)",
+                                              }}
+                                            >
+                                              ＊＊＊＊＊
+                                            </div>
+                                          ) : (
+                                            <>
+                                              <input
+                                                className={`value-input ${
+                                                  isValueInvalid
+                                                    ? "invalid"
+                                                    : ""
+                                                }`}
+                                                type="number"
+                                                value={item.value}
+                                                aria-label={`${item.name} 市值（${inputCurrency}）`}
+                                                title={
+                                                  inputCurrency === "USD"
+                                                    ? formatUsd(item.value)
+                                                    : formatCurrency(
+                                                        item.value
+                                                      )
+                                                }
+                                                onChange={(e) =>
+                                                  updateAsset(
+                                                    item.id,
+                                                    "value",
+                                                    e.target.value
+                                                  )
+                                                }
+                                                onBlur={() =>
+                                                  sanitizeAssetValue(item.id)
+                                                }
+                                              />
+                                              <div
+                                                className={
+                                                  isValueInvalid
+                                                    ? "fx-hint invalid-hint"
+                                                    : "fx-hint"
+                                                }
+                                                style={
+                                                  isValueInvalid
+                                                    ? {
+                                                        color: "var(--c-red)",
+                                                        fontWeight: 700,
+                                                      }
+                                                    : {}
+                                                }
+                                              >
+                                                {isValueInvalid
+                                                  ? "數值不可為負數"
+                                                  : inputCurrency === "USD"
+                                                  ? formatUsd(item.value)
+                                                  : formatCurrency(
+                                                      item.value
+                                                    )}
+                                              </div>
+                                            </>
+                                          )}
                                         </td>
                                         <td
                                           style={{
@@ -3735,32 +3995,7 @@ export default function App() {
                                             fontSize: 13,
                                           }}
                                         >
-                                          {formatCurrency(twdValue)}
-                                        </td>
-                                        <td style={{ textAlign: "right" }}>
-                                          {/* FIX: Show direction on currency convert button */}
-                                          <button
-                                            className="sort-btn"
-                                            style={{
-                                              width: "auto",
-                                              padding: "0 10px",
-                                              borderRadius: 8,
-                                              fontSize: 11,
-                                              fontWeight: 700,
-                                            }}
-                                            onClick={() =>
-                                              convertAssetCurrency(item.id)
-                                            }
-                                            title={`將 ${inputCurrency} 轉換為 ${
-                                              inputCurrency === "USD"
-                                                ? "TWD"
-                                                : "USD"
-                                            }`}
-                                          >
-                                            {inputCurrency === "USD"
-                                              ? "→TWD"
-                                              : "→USD"}
-                                          </button>
+                                          {maskMoney(formatCurrency(twdValue))}
                                         </td>
                                         <td style={{ textAlign: "right" }}>
                                           <div className="percent-inline">
@@ -3770,6 +4005,7 @@ export default function App() {
                                                 type="number"
                                                 min="0"
                                                 max="100"
+                                                aria-label={`${item.name} 目標占比`}
                                                 value={item.targetPercent}
                                                 onChange={(e) =>
                                                   updateAsset(
@@ -3809,7 +4045,9 @@ export default function App() {
                                             }`}
                                           >
                                             {isActionOver ? "+" : ""}
-                                            {formatCompactFixed(diff)}
+                                            {maskMoney(
+                                              formatCompactFixed(diff)
+                                            )}
                                           </div>
                                         </td>
                                         {manualMode && (
@@ -3918,9 +4156,11 @@ export default function App() {
                                         輸入市值
                                       </div>
                                       <div className="mobile-asset-card-field-value">
-                                        {inputCurrency === "USD"
-                                          ? formatUsd(item.value)
-                                          : formatCurrency(item.value)}
+                                        {maskMoney(
+                                          inputCurrency === "USD"
+                                            ? formatUsd(item.value)
+                                            : formatCurrency(item.value)
+                                        )}
                                       </div>
                                     </div>
                                     <div className="mobile-asset-card-field">
@@ -3928,7 +4168,7 @@ export default function App() {
                                         換算台幣
                                       </div>
                                       <div className="mobile-asset-card-field-value">
-                                        {formatCurrency(twdValue)}
+                                        {maskMoney(formatCurrency(twdValue))}
                                       </div>
                                     </div>
                                     <div className="mobile-asset-card-field">
@@ -3957,7 +4197,7 @@ export default function App() {
                                         }}
                                       >
                                         {isActionOver ? "+" : ""}
-                                        {formatCompactFixed(diff)}
+                                        {maskMoney(formatCompactFixed(diff))}
                                       </div>
                                     </div>
                                   </div>
